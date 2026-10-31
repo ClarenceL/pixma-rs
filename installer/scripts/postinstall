@@ -1,5 +1,16 @@
 #!/bin/bash
 
+# postinstall runs as root. Anything that doesn't need root (printer discovery,
+# the bridge daemon itself) runs as the logged-in console user instead.
+LABEL="com.pdrgds.pixma-bridge"
+PLIST="/Library/LaunchAgents/${LABEL}.plist"
+
+CONSOLE_USER=$(stat -f %Su /dev/console)
+CONSOLE_UID=""
+if [ -n "$CONSOLE_USER" ] && [ "$CONSOLE_USER" != "root" ] && [ "$CONSOLE_USER" != "loginwindow" ]; then
+    CONSOLE_UID=$(id -u "$CONSOLE_USER")
+fi
+
 # Discover Canon printer and register with CUPS for printing.
 #
 # Register using the printer's mDNS/Bonjour (dnssd://) device URI rather than a
@@ -16,9 +27,11 @@ for attempt in 1 2 3 4 5; do
 done
 
 # Fall back to a static IP from our own mDNS discovery if CUPS did not surface a
-# dnssd URI (e.g. Bonjour blocked). Less robust against DHCP changes.
-if [ -z "$DEVICE_URI" ]; then
-    PRINTER_IP=$(/usr/local/bin/pixma discover 2>/dev/null | grep "IP:" | head -1 | awk '{print $2}')
+# dnssd URI (e.g. Bonjour blocked). Less robust against DHCP changes. Run as the
+# console user: /usr/local/bin may be user-writable (e.g. Homebrew on Intel), so
+# executing it as root would let any process running as that user escalate.
+if [ -z "$DEVICE_URI" ] && [ -n "$CONSOLE_UID" ]; then
+    PRINTER_IP=$(launchctl asuser "$CONSOLE_UID" sudo -u "$CONSOLE_USER" /usr/local/bin/pixma discover 2>/dev/null | grep "IP:" | head -1 | awk '{print $2}')
     [ -n "$PRINTER_IP" ] && DEVICE_URI="ipp://${PRINTER_IP}:631/ipp/print"
 fi
 
@@ -28,7 +41,21 @@ fi
 
 # Install LaunchAgent
 mkdir -p /Library/LaunchAgents
-cp /usr/local/share/pixma/com.pdrgds.pixma-bridge.plist /Library/LaunchAgents/
-launchctl load /Library/LaunchAgents/com.pdrgds.pixma-bridge.plist 2>/dev/null
+cp /usr/local/share/pixma/${LABEL}.plist "$PLIST"
+chown root:wheel "$PLIST"
+chmod 644 "$PLIST"
+
+# Earlier versions loaded the agent with a bare `launchctl load` from this
+# root script, which put it in the system domain running as root. Remove that
+# instance and its root-owned log in /tmp.
+launchctl bootout "system/${LABEL}" 2>/dev/null
+rm -f /tmp/pixma-bridge.log
+
+# Load into the console user's GUI session so the bridge runs as that user.
+# Other users get it automatically at their next login.
+if [ -n "$CONSOLE_UID" ]; then
+    launchctl bootout "gui/${CONSOLE_UID}/${LABEL}" 2>/dev/null
+    launchctl bootstrap "gui/${CONSOLE_UID}" "$PLIST"
+fi
 
 exit 0

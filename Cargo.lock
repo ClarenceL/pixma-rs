@@ -1587,6 +1587,7 @@ dependencies = [
  "anyhow",
  "axum",
  "hostname",
+ "if-addrs",
  "mdns-sd",
  "pixma-protocol",
  "quick-xml",

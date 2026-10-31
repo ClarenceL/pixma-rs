@@ -1,7 +1,9 @@
 mod escl;
+mod guard;
 mod translate;
 
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::process::Command;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -9,10 +11,11 @@ use std::time::Duration;
 
 use axum::http::StatusCode;
 use axum::routing::{delete, get, post};
-use axum::Router;
+use axum::{middleware, Router};
 use tokio::sync::Mutex;
 
 use escl::AppState;
+use guard::GuardConfig;
 use pixma_protocol::discover;
 
 const ESCL_PORT: u16 = 8470;
@@ -77,13 +80,24 @@ async fn main() -> anyhow::Result<()> {
 
     // Catch-all fallback to log unhandled requests
     let app = app.fallback(|req: axum::extract::Request| async move {
-        eprintln!("[escl] UNHANDLED: {} {}", req.method(), req.uri());
+        eprintln!("[escl] UNHANDLED: {} {:?}", req.method(), req.uri());
         StatusCode::NOT_FOUND
     });
 
-    let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{ESCL_PORT}")).await?;
-    eprintln!("pixma-bridge: eSCL server listening on port {ESCL_PORT}");
+    // Applied last so it also covers the fallback.
+    let guard_config = GuardConfig::from_env();
+    let app = app.layer(middleware::from_fn_with_state(guard_config, guard::filter));
 
-    axum::serve(listener, app).await?;
+    let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{ESCL_PORT}")).await?;
+    eprintln!(
+        "pixma-bridge: eSCL server listening on port {ESCL_PORT} ({})",
+        if guard_config.allow_lan { "LAN clients allowed" } else { "local clients only" }
+    );
+
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
     Ok(())
 }

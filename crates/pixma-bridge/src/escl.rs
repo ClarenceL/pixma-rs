@@ -174,7 +174,7 @@ pub async fn get_next_document(
     State(state): State<AppState>,
     Path(job_id): Path<String>,
 ) -> Response {
-    eprintln!("[escl] GET /eSCL/ScanJobs/{job_id}/NextDocument");
+    eprintln!("[escl] GET /eSCL/ScanJobs/{job_id:?}/NextDocument");
 
     // If data is already ready, return it
     if let Some(data) = state.jobs.lock().await.remove(&job_id) {
@@ -200,7 +200,7 @@ pub async fn get_next_document(
     }
 
     // No data — no more pages
-    eprintln!("[escl] no more pages for job {job_id}");
+    eprintln!("[escl] no more pages for job {job_id:?}");
     StatusCode::NOT_FOUND.into_response()
 }
 
@@ -217,7 +217,7 @@ pub async fn delete_scan_job(
     State(state): State<AppState>,
     Path(job_id): Path<String>,
 ) -> StatusCode {
-    eprintln!("[escl] DELETE /eSCL/ScanJobs/{job_id}");
+    eprintln!("[escl] DELETE /eSCL/ScanJobs/{job_id:?}");
     state.jobs.lock().await.remove(&job_id);
     StatusCode::OK
 }
